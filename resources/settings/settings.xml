@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    Settings exposed to the user in Garmin Connect Mobile / Express.
+    Each setting is bound to a property declared in properties.xml.
+-->
+<settings>
+    <setting
+        propertyKey="@Properties.Use24Hour"
+        title="@Strings.Use24HourTitle">
+        <settingConfig type="boolean" />
+    </setting>
+</settings>

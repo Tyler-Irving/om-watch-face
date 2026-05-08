@@ -1,0 +1,12 @@
+# Connect IQ build artifacts
+bin/
+*.prg
+*.iq
+*.debug.xml
+
+# VS Code Monkey C extension
+.developer/
+
+# OS noise
+.DS_Store
+Thumbs.db

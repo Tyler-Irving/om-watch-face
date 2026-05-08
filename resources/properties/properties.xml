@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    User-configurable properties. These are read at runtime via
+    Application.Properties.getValue(<id>) and exposed to the user in
+    Garmin Connect's settings UI through resources/settings/settings.xml.
+-->
+<properties>
+    <!-- false = 12-hour clock (default), true = 24-hour clock -->
+    <property id="Use24Hour" type="boolean">false</property>
+</properties>

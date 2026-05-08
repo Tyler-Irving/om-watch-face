@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    Bitmap registry. Each <bitmap> declares a resource ID that source
+    files reference via Rez.Drawables.<id>.
+
+    HEY YOU: drop the real Ole Miss logo at resources/drawables/olemiss_logo.png
+    (PNG, square, ideally 360x360 or larger so it scales down cleanly on the
+    Fenix 8 47mm 416x416 display). The placeholder file currently in the repo
+    is a solid navy square so the build succeeds before you have the real art.
+-->
+<drawables>
+    <bitmap id="LauncherIcon" filename="launcher_icon.png" />
+    <bitmap id="OleMissLogo" filename="olemiss_logo.png" />
+</drawables>
