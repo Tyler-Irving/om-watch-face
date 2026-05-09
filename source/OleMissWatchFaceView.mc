@@ -5,19 +5,19 @@ using Toybox.Time;
 using Toybox.Time.Gregorian;
 using Toybox.Lang;
 using Toybox.Application;
+using Toybox.ActivityMonitor;
 
 //
 // OleMissWatchFaceView.mc — the visible watch face. Layout, top to bottom:
 //
 //   ┌──────────────────────────────────┐
-//   │                                  │
-//   │            12:34   ← time        │
-//   │          Sat, Nov 9 ← date       │
+//   │            8432 steps            │  ← steps (top-center)
+//   │                       12:34      │  ← time (right)
+//   │                       Sat, Nov 9 │  ← date (left-aligned w/ time)
 //   │                                  │
 //   │     [ Ole Miss logo background ] │
-//   │                                  │
-//   │          vs Alabama ← opponent   │
-//   │          2d 14h 32m ← countdown  │
+//   │             Alabama ← opponent   │
+//   │          Sat 7:30 PM ← kickoff   │
 //   │                                  │
 //   └──────────────────────────────────┘
 //
@@ -32,19 +32,25 @@ class OleMissWatchFaceView extends WatchUi.WatchFace {
 
     // ----- Layout ratios (all relative to screen height/width so any future
     //       Fenix 8 size drops in without re-tuning numbers manually). -----
-    private const TIME_CENTER_Y_RATIO       = 0.24;
-    private const DATE_CENTER_Y_RATIO       = 0.38;
-    private const OPPONENT_CENTER_Y_RATIO   = 0.72;
-    private const COUNTDOWN_CENTER_Y_RATIO  = 0.84;
+    // Steps sit at top-center; time and date sit lower-right, sharing a left edge.
+    private const STEPS_CENTER_Y_RATIO      = 0.52;
+    private const TIME_CENTER_Y_RATIO       = 0.34;
+    private const DATE_CENTER_Y_RATIO       = 0.43;
+    private const TIME_DATE_LEFT_X_RATIO    = 0.62;
+    private const OPPONENT_CENTER_Y_RATIO   = 0.82;
+    private const COUNTDOWN_CENTER_Y_RATIO  = 0.89;
 
     // Vertical extents used as clip rects in onPartialUpdate.
-    private const TIME_REGION_TOP_RATIO     = 0.14;
-    private const TIME_REGION_BOTTOM_RATIO  = 0.34;
-    private const KICK_REGION_TOP_RATIO     = 0.66;
-    private const KICK_REGION_BOTTOM_RATIO  = 0.92;
+    private const STEPS_REGION_TOP_RATIO    = 0.46;
+    private const STEPS_REGION_BOTTOM_RATIO = 0.58;
+    private const TIME_REGION_TOP_RATIO     = 0.25;
+    private const TIME_REGION_BOTTOM_RATIO  = 0.49;
+    private const KICK_REGION_TOP_RATIO     = 0.76;
+    private const KICK_REGION_BOTTOM_RATIO  = 0.94;
 
     // ----- Cached state -----------------------------------------------------
     private var _logoBitmap;
+    private var _footprintsBitmap;
     private var _screenWidth;
     private var _screenHeight;
     private var _centerX;
@@ -74,6 +80,7 @@ class OleMissWatchFaceView extends WatchUi.WatchFace {
         // Rez.Drawables namespace is generated from resource IDs at compile
         // time — no string lookup at runtime.
         _logoBitmap = WatchUi.loadResource(Rez.Drawables.OleMissLogo);
+        _footprintsBitmap = WatchUi.loadResource(Rez.Drawables.FootprintsIcon);
     }
 
     function onShow() {
@@ -92,6 +99,7 @@ class OleMissWatchFaceView extends WatchUi.WatchFace {
         dc.clear();
 
         _drawLogo(dc);
+        _drawSteps(dc);
         _drawTime(dc);
         _drawDate(dc);
         _drawKickoffSection(dc);
@@ -112,6 +120,7 @@ class OleMissWatchFaceView extends WatchUi.WatchFace {
         }
         _lastRenderedMinute = minute;
 
+        _redrawStepsRegion(dc);
         _redrawTimeRegion(dc);
         _redrawKickoffRegion(dc);
     }
@@ -137,6 +146,45 @@ class OleMissWatchFaceView extends WatchUi.WatchFace {
         dc.drawBitmap(x, y, _logoBitmap);
     }
 
+    private function _drawSteps(dc) {
+        // ActivityMonitor.getInfo() can return null very briefly during boot,
+        // and .steps itself may be null on devices without a step sensor or
+        // before the day's first sample. Default to 0 in either case.
+        var info = ActivityMonitor.getInfo();
+        var steps = (info != null && info.steps != null) ? info.steps : 0;
+        var stepsStr = _formatSteps(steps);
+
+        var font = Graphics.FONT_XTINY;
+        var y = (_screenHeight * STEPS_CENTER_Y_RATIO).toNumber();
+
+        var iconW = (_footprintsBitmap != null) ? _footprintsBitmap.getWidth()  : 0;
+        var iconH = (_footprintsBitmap != null) ? _footprintsBitmap.getHeight() : 0;
+        var spacing = 6;
+
+        // Anchor the row to the same left edge as the time/date stack.
+        var startX = (_screenWidth * TIME_DATE_LEFT_X_RATIO).toNumber();
+
+        if (_footprintsBitmap != null) {
+            dc.drawBitmap(startX, y - (iconH / 2), _footprintsBitmap);
+        }
+
+        var textX = startX + iconW + spacing;
+        _drawTextWithShadow(dc, textX, y, font, stepsStr, 1,
+            Graphics.TEXT_JUSTIFY_LEFT | Graphics.TEXT_JUSTIFY_VCENTER);
+    }
+
+    //
+    // 0–999 → "847", 1000–9999 → "1.5 K", 10000+ → "15 K".
+    //
+    private function _formatSteps(steps) {
+        if (steps < 1000) {
+            return steps.toString();
+        }
+        var thousands = steps.toFloat() / 1000.0;
+        var fmt = (steps < 10000) ? "%.1f" : "%.0f";
+        return Lang.format("$1$ K", [thousands.format(fmt)]);
+    }
+
     private function _drawTime(dc) {
         var clockTime = System.getClockTime();
         var hour      = clockTime.hour;
@@ -160,9 +208,10 @@ class OleMissWatchFaceView extends WatchUi.WatchFace {
                 [displayHour.format("%d"), minute.format("%02d")]);
         }
 
+        var x = (_screenWidth  * TIME_DATE_LEFT_X_RATIO).toNumber();
         var y = (_screenHeight * TIME_CENTER_Y_RATIO).toNumber();
-        _drawTextWithShadow(dc, _centerX, y, Graphics.FONT_NUMBER_THAI_HOT,
-            timeStr, 2);
+        _drawTextWithShadow(dc, x, y, Graphics.FONT_MEDIUM, timeStr, 1,
+            Graphics.TEXT_JUSTIFY_LEFT | Graphics.TEXT_JUSTIFY_VCENTER);
     }
 
     private function _drawDate(dc) {
@@ -171,26 +220,26 @@ class OleMissWatchFaceView extends WatchUi.WatchFace {
         var dateStr = Lang.format("$1$, $2$ $3$",
             [info.day_of_week, info.month, info.day]);
 
+        var x = (_screenWidth  * TIME_DATE_LEFT_X_RATIO).toNumber();
         var y = (_screenHeight * DATE_CENTER_Y_RATIO).toNumber();
-        _drawTextWithShadow(dc, _centerX, y, Graphics.FONT_SMALL, dateStr, 1);
+        _drawTextWithShadow(dc, x, y, Graphics.FONT_XTINY, dateStr, 1,
+            Graphics.TEXT_JUSTIFY_LEFT | Graphics.TEXT_JUSTIFY_VCENTER);
     }
 
     private function _drawKickoffSection(dc) {
         var nextGame = Schedule.getNextGame();
 
-        var line1; // opponent string ("vs Alabama" / "@ LSU") or filler
-        var line2; // countdown string, "TBD", "LIVE", "FINAL", or empty
+        var line1; // opponent name or filler
+        var line2; // kickoff time, "TBD", "LIVE", "FINAL", or empty
 
         if (nextGame == null) {
             // No game in the lookahead window → off-season filler.
             line1 = "Hotty Toddy";
             line2 = "";
         } else {
-            var prefix = nextGame[:home] ? "vs " : "@ ";
-            line1 = prefix + nextGame[:opponent];
+            line1 = nextGame[:opponent];
 
             if (!nextGame[:confirmed]) {
-                // Time hasn't been announced yet — don't tease a countdown.
                 line2 = "TBD";
             } else {
                 var status = Schedule.getGameStatus(nextGame);
@@ -199,8 +248,7 @@ class OleMissWatchFaceView extends WatchUi.WatchFace {
                 } else if (status == Schedule.STATUS_FINAL) {
                     line2 = "FINAL";
                 } else {
-                    var seconds = nextGame[:kickoff].value() - Time.now().value();
-                    line2 = CountdownFormatter.format(seconds);
+                    line2 = _formatKickoff(nextGame[:kickoff]);
                 }
             }
         }
@@ -208,26 +256,69 @@ class OleMissWatchFaceView extends WatchUi.WatchFace {
         var y1 = (_screenHeight * OPPONENT_CENTER_Y_RATIO).toNumber();
         var y2 = (_screenHeight * COUNTDOWN_CENTER_Y_RATIO).toNumber();
 
-        _drawTextWithShadow(dc, _centerX, y1, Graphics.FONT_SMALL,  line1, 1);
-        _drawTextWithShadow(dc, _centerX, y2, Graphics.FONT_MEDIUM, line2, 2);
+        var centerJustify = Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER;
+        _drawTextWithShadow(dc, _centerX, y1, Graphics.FONT_XTINY, line1, 1, centerJustify);
+        _drawTextWithShadow(dc, _centerX, y2, Graphics.FONT_XTINY, line2, 1, centerJustify);
     }
 
     //
-    // Renders text in white with a single-pixel-offset black shadow so it
-    // remains legible over a busy logo background. The offset is configurable
-    // (1 px for small text, 2 px for the giant clock).
+    // Formats a kickoff Moment as "<DOW> <h>:<mm>[ AM|PM]" in the user's local
+    // timezone, honoring the Use24Hour property. Day-of-week is included so a
+    // bare "7:30" isn't ambiguous when the game is days away.
     //
-    private function _drawTextWithShadow(dc, cx, cy, font, text, offset) {
-        var justify = Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER;
+    private function _formatKickoff(kickoffMoment) {
+        var info = Gregorian.info(kickoffMoment, Time.FORMAT_MEDIUM);
+        var hour = info.hour;
+        var minute = info.min;
 
+        var use24h = Application.Properties.getValue("Use24Hour") as Lang.Boolean;
+
+        var timeStr;
+        if (use24h) {
+            timeStr = Lang.format("$1$:$2$",
+                [hour.format("%02d"), minute.format("%02d")]);
+        } else {
+            var displayHour = hour % 12;
+            if (displayHour == 0) {
+                displayHour = 12;
+            }
+            var ampm = hour < 12 ? "AM" : "PM";
+            timeStr = Lang.format("$1$:$2$ $3$",
+                [displayHour.format("%d"), minute.format("%02d"), ampm]);
+        }
+
+        return Lang.format("$1$ $2$", [info.day_of_week, timeStr]);
+    }
+
+    //
+    // Renders text in white with a small black shadow offset so it stays
+    // legible over a busy logo background. The (x, y) anchor is interpreted
+    // according to the supplied justify flags — pass LEFT|VCENTER for the
+    // top-right time/date stack, CENTER|VCENTER for the kickoff strip.
+    //
+    private function _drawTextWithShadow(dc, x, y, font, text, offset, justify) {
         dc.setColor(Graphics.COLOR_BLACK, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(cx + offset, cy + offset, font, text, justify);
+        dc.drawText(x + offset, y + offset, font, text, justify);
 
         dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(cx, cy, font, text, justify);
+        dc.drawText(x, y, font, text, justify);
     }
 
     // ----- Low-power partial-update helpers ---------------------------------
+
+    //
+    // Re-renders the top-of-screen step counter clipped to its narrow band.
+    //
+    private function _redrawStepsRegion(dc) {
+        var top    = (_screenHeight * STEPS_REGION_TOP_RATIO).toNumber();
+        var bottom = (_screenHeight * STEPS_REGION_BOTTOM_RATIO).toNumber();
+        var height = bottom - top;
+
+        dc.setClip(0, top, _screenWidth, height);
+        _drawLogo(dc);
+        _drawSteps(dc);
+        dc.clearClip();
+    }
 
     //
     // Re-renders the clock + date strip without touching the rest of the
