@@ -61,14 +61,14 @@ monkeyc \
   -d fenix847mm \
   -f monkey.jungle \
   -o bin/OleMissWatchFace.prg \
-  -y /home/tirving/garmin/keys/developer_key.der \
+  -y ~/garmin/keys/developer_key.der \
   -w
 
 connectiq                                # start the simulator
 monkeydo bin/OleMissWatchFace.prg fenix847mm
 ```
 
-Your developer key lives at `/home/tirving/garmin/keys/developer_key.der`
+Your developer key lives at `~/garmin/keys/developer_key.der`
 — the `-y` flag above already points at it. If you ever regenerate the
 key, update the path in this README and in any wrapper scripts you add
 under `scripts/`.
