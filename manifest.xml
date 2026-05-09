@@ -26,6 +26,7 @@
             <!-- Primary target. Add other Fenix 8 product IDs here later:
                  fenix851mm, fenix843mm, fenix8solar51mm, fenix8solar47mm -->
             <iq:product id="fenix847mm"/>
+            <iq:product id="fenix8pro47mm"/>
         </iq:products>
 
         <!-- No permissions required: this version is fully offline.
