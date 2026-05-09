@@ -1,0 +1,111 @@
+Checkpoint — 2026-05-09T03:55Z (local: 2026-05-08 PM)
+
+Branch: feat/live-schedule-data
+Last commit: 2532afd  docs: README for live schedule scaffold + known size-cap gap
+
+================================================================================
+COMPLETED THIS SESSION
+================================================================================
+
+1. Connect IQ simulator brought up locally (WSL2 + WSLg)
+   - Installed system dep: libusb-1.0-0 (was missing; user ran sudo apt)
+   - SDK 9.1.0 simulator + monkeydo verified working against fenix8pro47mm
+
+2. Visual fix — full-screen navy background (commit 99f9063)
+   - olemiss_logo.png is 416x416 but the Fenix 8 Pro 47mm screen is 454x454
+   - Was leaving a 19-px black strip around the logo
+   - Sampled corner pixel #002147 from the PNG; clear with that color
+     before drawing logo so the bitmap's own navy padding blends seamlessly
+   - Edit lives in OleMissWatchFaceView.mc (BACKGROUND_COLOR const + onUpdate)
+
+3. Live schedule scaffold (commit 0b5fc9b)
+   - NEW source/BackgroundService.mc
+       Toybox.System.ServiceDelegate, (:background)-annotated.
+       Fetches ESPN team-schedule endpoint (team id 145), parses events,
+       writes to ScheduleStore, self-reschedules on adaptive cadence:
+         - daily ping when no game in next 24h
+         - wake at kickoff when next game inside 24h
+         - 15-min polling inside live window (kickoff -> kickoff+4h30m)
+       All wakes clamp to Connect IQ's 5-min floor.
+   - NEW source/ScheduleStore.mc
+       Application.Storage facade. Single source of truth for keys + shape.
+       Kickoff times round-trip as Number epoch seconds (Time.Moment isn't
+       directly storable). Tracks last-fetch, last-error, poll mode.
+   - UPDATED source/Schedule.mc
+       getSchedule() reads from ScheduleStore first, falls back to compiled-in
+       static array when storage is empty. Added invalidateCache() for the
+       App to call after onBackgroundData fires.
+   - UPDATED source/OleMissWatchFaceApp.mc
+       getServiceDelegate() returns BackgroundService.
+       onBackgroundData() invalidates Schedule cache + requestUpdate().
+       onStart() seeds first temporal event if none registered.
+   - UPDATED manifest.xml
+       Added <iq:uses-permission id="Communications"/> and
+             <iq:uses-permission id="Background"/>
+
+4. README updated (commit 2532afd)
+   - Reflects new architecture, file tree, live-schedule section with
+     cadence table + known gaps, refreshed Next steps
+
+================================================================================
+KNOWN BLOCKERS / OPEN QUESTIONS
+================================================================================
+
+A. ESPN response is too large to ingest on real hardware.
+   - Default endpoint returned events:[] today (we're in 2026 preseason; no
+     2026 schedule published yet — confirmed via curl)
+   - 2025 season explicitly requested via ?season=2025 returned 12 events
+     and 418 KB. Connect IQ's per-request JSON cap on watch faces is ~32 KB.
+   - Decision pending: stand up a slim proxy (Cloudflare Worker / Vercel
+     function / etc.) that strips each event to {opponent, kickoffSec,
+     confirmed, status, home} and returns ~1-2 KB. Then point
+     BackgroundService.SCHEDULE_URL at it.
+
+B. Static fallback schedule is the 2025 season; we are now in 2026.
+   - All static games are in the past, so the always-2-days-out demo game
+     (INCLUDE_DEMO_GAME=true) is what shows on the watch right now.
+   - Refresh _buildStaticSchedule() with 2026 dates once Ole Miss/SEC
+     publishes the slate (typically late spring / early summer).
+
+C. ~12 typechecker warnings in BackgroundService.mc on dynamic JSON dict
+   walks ("Cannot determine if container access is using container type").
+   - Non-blocking. Build is SUCCESSFUL.
+   - Can be silenced with explicit `as Lang.Dictionary` narrowing if/when
+     we want a clean build.
+
+================================================================================
+NEXT STEPS (resume from here)
+================================================================================
+
+1. Decide proxy direction:
+   - Cloudflare Worker (free tier; cold-start friendly; trivial JS)
+   - Vercel function (free tier; user already has a Vercel MCP integration)
+   - Skip proxy + use a different endpoint (scoreboard?) — narrower data
+     but smaller payload. Doesn't tell you future games though.
+
+2. Once proxy URL exists, swap the SCHEDULE_URL constant in
+   source/BackgroundService.mc:38, rebuild, push to simulator,
+   trigger background event from sim menu, verify Storage populates
+   and "Demo Opponent" disappears.
+
+3. Refresh source/Schedule.mc _buildStaticSchedule() with 2026 dates
+   when the slate is published.
+
+4. Consider silencing the type warnings (cosmetic).
+
+5. PR prep when feature is complete:
+   - Run /review on this branch
+   - Open PR from feat/live-schedule-data -> main with `gh pr create`
+
+================================================================================
+ENVIRONMENT NOTES
+================================================================================
+
+Simulator command (sometimes drops; relaunch as needed):
+  SDK=~/.Garmin/ConnectIQ/Sdks/connectiq-sdk-lin-9.1.0-2026-03-09-6a872a80b
+  nohup "$SDK/bin/connectiq" > /tmp/connectiq-sim.log 2>&1 &
+  nohup "$SDK/bin/monkeydo" bin/OleMissWatchFace.prg fenix8pro47mm > /tmp/monkeydo.log 2>&1 &
+
+Build command:
+  "$SDK/bin/monkeyc" -d fenix8pro47mm -f monkey.jungle \
+    -o bin/OleMissWatchFace.prg -y ~/garmin/keys/developer_key.der -w
