@@ -1,5 +1,6 @@
 using Toybox.Time;
 using Toybox.Lang;
+using Toybox.Application;
 
 //
 // Schedule.mc — the Ole Miss football schedule and helpers for finding the
@@ -53,19 +54,23 @@ module Schedule {
     //   :kickoff   → Time.Moment, kickoff in UTC
     //   :confirmed → Boolean, false → render "TBD" instead of a countdown
     //
-    // TODO(network): swap _buildStaticSchedule() for a Communications
-    // .makeWebRequest call that returns the same Array<Dictionary> shape.
-    // The rest of the file (getNextGame, getGameStatus) is consumer-side and
-    // does not care where the data came from.
+    // Source priority: live network data persisted by BackgroundService wins
+    // when present; otherwise we fall back to the compiled-in static schedule
+    // (which doubles as a sane offline / first-launch / off-season default).
     //
     function getSchedule() as Lang.Array<Lang.Dictionary> {
         if (_cachedSchedule == null) {
-            _cachedSchedule = _buildStaticSchedule();
-            if (INCLUDE_DEMO_GAME) {
-                _cachedSchedule.add(_buildDemoGame());
-            }
+            _cachedSchedule = _loadSchedule();
         }
         return _cachedSchedule;
+    }
+
+    //
+    // Drops the in-memory cache so the next getSchedule() re-reads from
+    // Storage. Called by the App after onBackgroundData fires.
+    //
+    function invalidateCache() {
+        _cachedSchedule = null;
     }
 
     //
@@ -128,6 +133,46 @@ module Schedule {
     // ========================================================================
     // Implementation details below
     // ========================================================================
+
+    //
+    // Pick a schedule source: Storage (background-fetched) if populated,
+    // otherwise the compiled-in static fallback.
+    //
+    function _loadSchedule() as Lang.Array<Lang.Dictionary> {
+        var stored = ScheduleStore.loadGames();
+        if (stored != null && stored.size() > 0) {
+            return _hydrateStored(stored);
+        }
+        var fallback = _buildStaticSchedule();
+        if (INCLUDE_DEMO_GAME) {
+            fallback.add(_buildDemoGame());
+        }
+        return fallback;
+    }
+
+    //
+    // Convert ScheduleStore's persistable shape (kickoff as Number epoch
+    // seconds) into the Time.Moment-bearing dictionary the rest of the watch
+    // face expects.
+    //
+    function _hydrateStored(rawArr as Lang.Array<Lang.Dictionary>) as Lang.Array<Lang.Dictionary> {
+        var out = [];
+        for (var i = 0; i < rawArr.size(); i++) {
+            var raw = rawArr[i];
+            // Storage-side dicts use String keys (Application.Storage rejects
+            // symbol-keyed dicts). The in-memory shape returned here keeps
+            // symbol keys to match _buildStaticSchedule and the view.
+            var kickoffSec = raw["kickoffSec"];
+            if (kickoffSec == null) { continue; }
+            out.add({
+                :opponent  => raw["opponent"],
+                :home      => raw["home"],
+                :kickoff   => new Time.Moment(kickoffSec),
+                :confirmed => raw["confirmed"]
+            });
+        }
+        return out;
+    }
 
     //
     // The 2025 Ole Miss Rebels regular season. Times are best-effort UTC for

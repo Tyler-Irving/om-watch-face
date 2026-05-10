@@ -29,10 +29,16 @@
             <iq:product id="fenix8pro47mm"/>
         </iq:products>
 
-        <!-- No permissions required: this version is fully offline.
-             When the network-backed schedule lands, add:
-               <iq:uses-permission id="Communications"/> -->
-        <iq:permissions/>
+        <!--
+            Communications: Background service hits ESPN's public schedule
+                            endpoint via Communications.makeWebRequest.
+            Background:     BackgroundService re-registers itself for periodic
+                            wake-ups via Background.registerForTemporalEvent.
+        -->
+        <iq:permissions>
+            <iq:uses-permission id="Communications"/>
+            <iq:uses-permission id="Background"/>
+        </iq:permissions>
 
         <iq:languages>
             <iq:language>eng</iq:language>

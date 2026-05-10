@@ -48,6 +48,12 @@ class OleMissWatchFaceView extends WatchUi.WatchFace {
     private const KICK_REGION_TOP_RATIO     = 0.76;
     private const KICK_REGION_BOTTOM_RATIO  = 0.94;
 
+    // Background fill — sampled from the logo PNG's corner pixel (Ole Miss
+    // navy #002147). The logo bitmap is smaller than some target screens
+    // (e.g. 416×416 art on the 454×454 Fenix 8 Pro), so we clear with this
+    // color and the logo's own padding blends seamlessly into the surround.
+    private const BACKGROUND_COLOR = 0x002147;
+
     // ----- Cached state -----------------------------------------------------
     private var _logoBitmap;
     private var _footprintsBitmap;
@@ -95,7 +101,7 @@ class OleMissWatchFaceView extends WatchUi.WatchFace {
     // sits underneath the readable layers.
     //
     function onUpdate(dc) {
-        dc.setColor(Graphics.COLOR_BLACK, Graphics.COLOR_BLACK);
+        dc.setColor(Graphics.COLOR_WHITE, BACKGROUND_COLOR);
         dc.clear();
 
         _drawLogo(dc);
