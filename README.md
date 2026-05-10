@@ -1,9 +1,9 @@
 # Ole Miss Watch Face
 
-A Garmin Connect IQ watch face for the Fenix 8 / Fenix 8 Pro 47 mm
-(round AMOLED). Shows the current time, today's date, daily steps,
-and a countdown to the next Ole Miss Rebels football kickoff over the
-Ole Miss logo.
+A Garmin Connect IQ watch face for the **Fenix 8 Pro 47mm** (454×454
+round AMOLED) — the only supported device. Shows the current time,
+today's date, daily steps, and a countdown to the next Ole Miss
+Rebels football kickoff over the Ole Miss logo.
 
 Schedule data is fetched in the background from a Cloudflare Worker proxy
 (`om-schedule-proxy`) that wraps ESPN's public API and strips each event
@@ -15,22 +15,22 @@ fallback.
 
 ```
 om-watch-face/
-├── manifest.xml                  Connect IQ app manifest (targets: fenix847mm, fenix8pro47mm)
+├── manifest.xml                  Connect IQ app manifest (target: fenix8pro47mm)
 ├── monkey.jungle                 Build configuration
 ├── resources/
 │   ├── drawables/
 │   │   ├── drawables.xml         Bitmap registry
-│   │   ├── launcher_icon.png     Placeholder — replace with your icon
-│   │   └── olemiss_logo.png      Placeholder — REPLACE with the real logo
+│   │   ├── launcher_icon.png
+│   │   └── olemiss_logo.png
 │   ├── properties/properties.xml Default values for user settings
 │   ├── settings/settings.xml     UI for user settings (24h toggle)
 │   └── strings/strings.xml       App name + setting labels
 └── source/
     ├── OleMissWatchFaceApp.mc    AppBase entry point + background wiring
     ├── OleMissWatchFaceView.mc   Layout + draw + low-power partial update
-    ├── Schedule.mc               Schedule lookup (storage-first, static fallback)
+    ├── Schedule.mc               Read-only schedule view (hydrates from storage)
     ├── ScheduleStore.mc          Application.Storage facade for fetched data
-    ├── BackgroundService.mc      Adaptive-polling ESPN fetch
+    ├── BackgroundService.mc      Adaptive-polling proxy fetch
     └── CountdownFormatter.mc     "2d 14h 32m" / "14h 32m" formatter
 ```
 
@@ -52,7 +52,7 @@ From the project root:
 code .
 
 # 2. In VS Code: Cmd/Ctrl-Shift-P → "Monkey C: Build for Device"
-#    Pick "fenix847mm".  This produces bin/OleMissWatchFace.prg.
+#    Pick "fenix8pro47mm". This produces bin/OleMissWatchFace.prg.
 
 # 3. Run it: Cmd/Ctrl-Shift-P → "Monkey C: Run No Debug"
 #    The Connect IQ simulator launches with the watch face loaded.
@@ -61,39 +61,35 @@ code .
 You should see the Ole Miss logo on a navy field, the current time and
 date stacked on the right, daily steps in the upper-right strip, and a
 countdown to the next game across the bottom. Until the first
-successful background fetch lands ESPN data in storage, the schedule
-falls back to the compiled-in 2025 array — which means out of season
-you'll see the synthetic `Demo Opponent` two days out. Set
-`INCLUDE_DEMO_GAME = false` in `Schedule.mc` to suppress it and show
-the "Hotty Toddy" off-season filler instead.
+background fetch lands data in storage (or out of season when ESPN
+returns an empty schedule), the bottom strip reads "Hotty Toddy".
 
 CLI alternative (skip VS Code):
 
 ```bash
 monkeyc \
-  -d fenix847mm \
+  -d fenix8pro47mm \
   -f monkey.jungle \
   -o bin/OleMissWatchFace.prg \
   -y ~/garmin/keys/developer_key.der \
   -w
 
-connectiq                                # start the simulator
-monkeydo bin/OleMissWatchFace.prg fenix847mm
+connectiq                                          # start the simulator
+monkeydo bin/OleMissWatchFace.prg fenix8pro47mm
 ```
 
-Your developer key lives at `~/garmin/keys/developer_key.der`
-— the `-y` flag above already points at it. If you ever regenerate the
-key, update the path in this README and in any wrapper scripts you add
-under `scripts/`.
+The developer key lives at `~/garmin/keys/developer_key.der` (the `-y`
+flag above points at it). Regenerate via VS Code `Monkey C: Generate
+a Developer Key` if you ever lose it; update the path in this README
+if you put it elsewhere.
 
-## Sideload onto a physical Fenix 8
+## Sideload onto a physical Fenix 8 Pro
 
-The **Fenix 8 Pro 47mm** uses MTP for USB transfer — there is no Mass
+The Fenix 8 Pro 47mm uses MTP for USB transfer — there is no Mass
 Storage mode, so the watch never gets a drive letter and you cannot
 `cp` to it from WSL. Use Windows Explorer for the final drag.
 
-1. **Build a release `.prg`** targeting your watch's product ID. For
-   the Fenix 8 Pro 47mm:
+1. **Build a release `.prg`**:
 
    ```bash
    SDK=~/.Garmin/ConnectIQ/Sdks/connectiq-sdk-lin-9.1.0-2026-03-09-6a872a80b
@@ -105,8 +101,7 @@ Storage mode, so the watch never gets a drive letter and you cannot
      -w -r
    ```
 
-   For the regular Fenix 8 47mm, swap `-d fenix8pro47mm` for
-   `-d fenix847mm`. The `-r` flag produces a release (non-debug) build.
+   The `-r` flag produces a release (non-debug) build.
 
 2. **Stage the `.prg` somewhere Windows can see it.** WSL paths exposed
    via `\\wsl.localhost\...` work in Explorer but Shell COM/MTP copies
@@ -146,11 +141,11 @@ the App class).
 ## Live schedule data
 
 `source/BackgroundService.mc` is a `Toybox.System.ServiceDelegate`
-(annotated `(:background)`) that hits a slim Cloudflare Worker proxy,
-parses the returned events, and writes them to `Application.Storage`
-via `ScheduleStore`. The watch face reads from storage on every redraw
-and falls back to the compiled-in static schedule when storage is empty
-(first launch, off-season, or fetch failures).
+(annotated `(:background)`) that hits a Cloudflare Worker proxy, parses
+the returned events, and writes them to `Application.Storage` via
+`ScheduleStore`. The watch face reads from storage on every redraw;
+when storage is empty (first launch, off-season, or fetch failures)
+the kickoff strip reads "Hotty Toddy".
 
 The proxy lives in the sibling repo `om-schedule-proxy` — its job is to
 hit ESPN's free team-schedule endpoint server-side, strip each event to
@@ -172,15 +167,6 @@ required — Garmin routes background HTTP through Connect Mobile over
 BLE, so missed wake-ups (phone out of range) are dropped rather than
 caught up.
 
-### Off-season behavior
-
-ESPN's endpoint returns `events: []` until the new schedule is
-published (typically late spring / early summer). When the proxy
-returns empty events, `Schedule.mc` falls back to the compiled-in
-static schedule. Refresh `_buildStaticSchedule()` each year when the
-new schedule drops; the static fallback also covers offline / first-
-launch / fetch-failure cases regardless of season.
-
 ### Gotchas worth knowing
 
 - **`(:background)` on `ScheduleStore`.** The background process is a
@@ -191,27 +177,6 @@ launch / fetch-failure cases regardless of season.
 - **String keys, not Symbol keys, in Storage-bound dicts.**
   `Application.Storage` accepts only `Number | Long | Float | Double |
   String` as dictionary keys. Symbol-keyed dicts throw
-  `UnexpectedTypeException` on `setValue`. The in-memory shape returned
-  by `Schedule._hydrateStored()` re-keys with Symbols to match the
-  static-schedule shape the view expects.
-
-## Next steps
-
-- **Refresh the static fallback for 2026.** Edit the array in
-  `source/Schedule.mc → _buildStaticSchedule()`. Each row is
-  `(opponent, isHome, year, month, day, hourUTC, minuteUTC, confirmed)`.
-  Set `confirmed=false` for any TBD kickoff. The static schedule
-  doubles as the off-season / offline fallback when the proxy returns
-  empty events.
-- **Live scores.** Add `:homeScore`, `:awayScore`, and `:gameClock`
-  keys to the schedule entries (and to `ScheduleStore`'s persisted
-  shape). In `_drawKickoffSection()`, when status is `STATUS_LIVE`,
-  render a third line with the score / clock instead of the "LIVE"
-  placeholder.
-- **More Fenix 8 sizes.** Append product IDs (`fenix851mm`,
-  `fenix843mm`, `fenix8solar51mm`, `fenix8solar47mm`) to the
-  `<iq:products>` block in `manifest.xml`. The view sizes everything
-  from `dc.getWidth()` / `dc.getHeight()`, so the layout already
-  scales — but you may want device-specific resource directories
-  (`resources-fenix851mm/...`) for per-size logo variants. The pattern
-  is documented in `monkey.jungle`.
+  `UnexpectedTypeException` on `setValue`. `Schedule._hydrateStored()`
+  re-keys with Symbols on the read side because the view code reads
+  symbol keys.

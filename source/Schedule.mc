@@ -1,15 +1,10 @@
 using Toybox.Time;
 using Toybox.Lang;
-using Toybox.Application;
 
 //
-// Schedule.mc — the Ole Miss football schedule and helpers for finding the
-// "next game" relative to the current time.
-//
-// Today this is a static array compiled into the watch face. Tomorrow it
-// will be a Communications.makeWebRequest call to a backend that returns
-// the same shape; the rest of the app already reads the schedule through
-// getNextGame() / getGameStatus() so nothing else has to change.
+// Schedule.mc — read-only view over the schedule data BackgroundService
+// persists into Storage. Provides "next game" lookup and status
+// classification for the watch face's countdown strip.
 //
 // In Monkey C, a `module` is roughly a namespace — module-level functions
 // and constants are reached as Schedule.foo() / Schedule.STATUS_LIVE.
@@ -36,15 +31,8 @@ module Schedule {
     // Outside the window, it falls back to the "Hotty Toddy" filler.
     const LOOKAHEAD_WINDOW_SEC = 14 * 24 * 3600; // 14 days
 
-    // ----- Demo / development knobs -----------------------------------------
-    // When true, getSchedule() injects a synthetic game two days from now so
-    // the simulator always has something to count down to. Flip to false to
-    // test against the real (potentially all-in-the-past) static schedule.
-    const INCLUDE_DEMO_GAME = true;
-
-    // Cached schedule — built once on first read. The static schedule never
-    // changes at runtime, so there is no reason to rebuild Moments on every
-    // onUpdate().
+    // Cached hydrated schedule. Rebuilt lazily on getSchedule() after
+    // invalidateCache() — which the App calls when onBackgroundData fires.
     var _cachedSchedule = null;
 
     //
@@ -54,9 +42,9 @@ module Schedule {
     //   :kickoff   → Time.Moment, kickoff in UTC
     //   :confirmed → Boolean, false → render "TBD" instead of a countdown
     //
-    // Source priority: live network data persisted by BackgroundService wins
-    // when present; otherwise we fall back to the compiled-in static schedule
-    // (which doubles as a sane offline / first-launch / off-season default).
+    // Sourced from Storage (background-fetched). Returns an empty array
+    // before the first successful background fetch lands or when the
+    // upstream returns no events (off-season).
     //
     function getSchedule() as Lang.Array<Lang.Dictionary> {
         if (_cachedSchedule == null) {
@@ -134,34 +122,23 @@ module Schedule {
     // Implementation details below
     // ========================================================================
 
-    //
-    // Pick a schedule source: Storage (background-fetched) if populated,
-    // otherwise the compiled-in static fallback.
-    //
     function _loadSchedule() as Lang.Array<Lang.Dictionary> {
         var stored = ScheduleStore.loadGames();
-        if (stored != null && stored.size() > 0) {
-            return _hydrateStored(stored);
+        if (stored == null) {
+            return [];
         }
-        var fallback = _buildStaticSchedule();
-        if (INCLUDE_DEMO_GAME) {
-            fallback.add(_buildDemoGame());
-        }
-        return fallback;
+        return _hydrateStored(stored);
     }
 
     //
     // Convert ScheduleStore's persistable shape (kickoff as Number epoch
-    // seconds) into the Time.Moment-bearing dictionary the rest of the watch
-    // face expects.
+    // seconds, String dict keys) into the Time.Moment-bearing dictionary
+    // with Symbol keys that the view code reads.
     //
     function _hydrateStored(rawArr as Lang.Array<Lang.Dictionary>) as Lang.Array<Lang.Dictionary> {
         var out = [];
         for (var i = 0; i < rawArr.size(); i++) {
             var raw = rawArr[i];
-            // Storage-side dicts use String keys (Application.Storage rejects
-            // symbol-keyed dicts). The in-memory shape returned here keeps
-            // symbol keys to match _buildStaticSchedule and the view.
             var kickoffSec = raw["kickoffSec"];
             if (kickoffSec == null) { continue; }
             out.add({
@@ -172,93 +149,5 @@ module Schedule {
             });
         }
         return out;
-    }
-
-    //
-    // The 2025 Ole Miss Rebels regular season. Times are best-effort UTC for
-    // the announced kickoff slot; replace with authoritative values as they
-    // are confirmed. Games whose kickoff time is still TBD are flagged with
-    // confirmed=false and a placeholder kickoff at 17:00 UTC of the game day,
-    // so they still sort correctly even though the view will render "TBD".
-    //
-    function _buildStaticSchedule() {
-        return [
-            // opponent,          home,  Y    M   D   h   m   confirmed
-            _buildGame("Georgia State",     true,  2025,  8, 30, 23,  0, true),
-            _buildGame("Kentucky",          true,  2025,  9,  6, 20, 15, true),
-            _buildGame("Arkansas",          false, 2025,  9, 13, 20, 30, true),
-            _buildGame("Tulane",            true,  2025,  9, 20, 21,  0, true),
-            _buildGame("LSU",               true,  2025,  9, 27, 23, 30, true),
-            _buildGame("Washington State",  true,  2025, 10, 11, 21,  0, true),
-            _buildGame("Georgia",           false, 2025, 10, 18, 20, 30, true),
-            _buildGame("Oklahoma",          true,  2025, 10, 25, 21,  0, true),
-            _buildGame("South Carolina",    false, 2025, 11,  1, 17,  0, false),
-            _buildGame("The Citadel",       true,  2025, 11, 15, 21,  0, true),
-            _buildGame("Florida",           false, 2025, 11, 22, 17,  0, false),
-            _buildGame("Mississippi State", true,  2025, 11, 28, 19, 30, true)
-        ];
-    }
-
-    //
-    // A synthetic "game" two days from right-now, used so the simulator
-    // always shows a working countdown regardless of the calendar date.
-    //
-    function _buildDemoGame() {
-        var twoDays = new Time.Duration(2 * 24 * 3600);
-        return {
-            :opponent  => "Demo Opponent",
-            :home      => true,
-            :kickoff   => Time.now().add(twoDays),
-            :confirmed => true
-        };
-    }
-
-    //
-    // Constructs a game dictionary from primitive arguments. Kickoff is built
-    // as a UTC Moment via _utcMoment so the schedule is timezone-independent.
-    //
-    function _buildGame(opponent, isHome, year, month, day, hour, minute, confirmed) {
-        return {
-            :opponent  => opponent,
-            :home      => isHome,
-            :kickoff   => _utcMoment(year, month, day, hour, minute),
-            :confirmed => confirmed
-        };
-    }
-
-    //
-    // Returns a Time.Moment representing the given UTC date/time.
-    //
-    // Toybox's Gregorian.moment() interprets its dictionary in *local* time
-    // and there is no built-in UTC variant, so we compute the epoch seconds
-    // ourselves and hand them to the Moment constructor (which takes seconds
-    // since 1970-01-01 UTC).
-    //
-    function _utcMoment(year, month, day, hour, minute) {
-        var days = 0;
-
-        // Whole years from 1970 up to (but not including) `year`.
-        for (var y = 1970; y < year; y++) {
-            days += _isLeapYear(y) ? 366 : 365;
-        }
-
-        // Days for completed months in the current year.
-        var monthDays = [31, _isLeapYear(year) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-        for (var m = 0; m < month - 1; m++) {
-            days += monthDays[m];
-        }
-
-        // Days within the current month.
-        days += day - 1;
-
-        var seconds = days * 86400 + hour * 3600 + minute * 60;
-        return new Time.Moment(seconds);
-    }
-
-    function _isLeapYear(year) {
-        if (year % 400 == 0) { return true; }
-        if (year % 100 == 0) { return false; }
-        if (year % 4 == 0)   { return true; }
-        return false;
     }
 }

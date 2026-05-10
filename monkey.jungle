@@ -1,6 +1,4 @@
 project.manifest = manifest.xml
 
-# Default resource path picks up everything under resources/.
-# To add device-specific overrides later, create resources-<deviceId>/
-# directories and append them here, e.g.:
-#   fenix851mm.resourcePath = $(fenix851mm.resourcePath);resources-fenix851mm
+# Single target (fenix8pro47mm). Default resource path picks up everything
+# under resources/.
