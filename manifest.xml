@@ -7,10 +7,9 @@
     the value before publishing to the Connect IQ store. For local dev
     against the simulator the placeholder is fine.
 
-    Primary target is the Fenix 8 47mm AMOLED (416x416). To add other
-    Fenix 8 sizes later, append more <iq:product> entries below — the
-    rendering code already centers everything on the device dimensions
-    reported at runtime.
+    Targets the Fenix 8 Pro 47mm AMOLED (454x454) only — that's the device
+    this watch face is built for and validated on. Other Fenix 8 variants
+    are intentionally out of scope.
 -->
 <iq:manifest version="3" xmlns:iq="http://www.garmin.com/xml/connectiq">
     <iq:application
@@ -23,9 +22,6 @@
         version="0.1.0">
 
         <iq:products>
-            <!-- Primary target. Add other Fenix 8 product IDs here later:
-                 fenix851mm, fenix843mm, fenix8solar51mm, fenix8solar47mm -->
-            <iq:product id="fenix847mm"/>
             <iq:product id="fenix8pro47mm"/>
         </iq:products>
 
