@@ -196,12 +196,17 @@ class BackgroundService extends System.ServiceDelegate {
     //
     private function _parseProxy(json as Lang.Dictionary) as Lang.Array<Lang.Dictionary> {
         var out = [];
-        var events = json["events"];
+        // `as` casts narrow the dict/array element types for the type checker;
+        // they silence "Cannot determine container type" on the dynamic JSON
+        // reads below. Cast to a nullable union so the null guards remain
+        // reachable — the runtime check is what actually protects us if the
+        // upstream payload is malformed.
+        var events = json["events"] as Null or Lang.Array<Lang.Dictionary>;
         if (events == null) {
             return out;
         }
         for (var i = 0; i < events.size(); i++) {
-            var e = events[i];
+            var e = events[i] as Null or Lang.Dictionary;
             if (e == null) { continue; }
 
             // kickoffSec is the only field we can't synthesize — without it
