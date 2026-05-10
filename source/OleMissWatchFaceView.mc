@@ -216,15 +216,18 @@ class OleMissWatchFaceView extends WatchUi.WatchFace {
 
         var x = (_screenWidth  * TIME_DATE_LEFT_X_RATIO).toNumber();
         var y = (_screenHeight * TIME_CENTER_Y_RATIO).toNumber();
-        _drawTextWithShadow(dc, x, y, Graphics.FONT_MEDIUM, timeStr, 1,
+        _drawTextWithShadow(dc, x, y, Graphics.FONT_SMALL, timeStr, 1,
             Graphics.TEXT_JUSTIFY_LEFT | Graphics.TEXT_JUSTIFY_VCENTER);
     }
 
     private function _drawDate(dc) {
-        var info = Gregorian.info(Time.now(), Time.FORMAT_MEDIUM);
-        // FORMAT_MEDIUM populates day_of_week and month as 3-letter strings.
-        var dateStr = Lang.format("$1$, $2$ $3$",
-            [info.day_of_week, info.month, info.day]);
+        // Two info structs: MEDIUM gives "Sat" for day_of_week (locale-aware),
+        // SHORT gives a numeric month (1-12). Combined as "Sat 11/9".
+        var moment    = Time.now();
+        var infoMed   = Gregorian.info(moment, Time.FORMAT_MEDIUM);
+        var infoShort = Gregorian.info(moment, Time.FORMAT_SHORT);
+        var dateStr = Lang.format("$1$ $2$/$3$",
+            [infoMed.day_of_week, infoShort.month, infoMed.day]);
 
         var x = (_screenWidth  * TIME_DATE_LEFT_X_RATIO).toNumber();
         var y = (_screenHeight * DATE_CENTER_Y_RATIO).toNumber();
