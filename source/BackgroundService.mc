@@ -30,13 +30,12 @@ using Toybox.Lang;
 (:background)
 class BackgroundService extends System.ServiceDelegate {
 
-    // ESPN's free, unauthenticated public API. Team ID 145 = Ole Miss Rebels.
-    // Unofficial — can break or rate-limit without notice. If the response
-    // outgrows Connect IQ's per-request JSON size limit (varies by device,
-    // typically tens of KB), swap this for a slim proxy that returns just
-    // {opponent, kickoffSec, confirmed, status, home} tuples.
+    // Slim ESPN proxy (Cloudflare Worker — source in sibling repo
+    // om-schedule-proxy). Hits ESPN server-side, strips each event to the five
+    // fields the watch uses, returns ~1-2 KB instead of ESPN's ~400 KB so we
+    // stay under Connect IQ's per-request JSON cap.
     private const SCHEDULE_URL =
-        "https://site.api.espn.com/apis/site/v2/sports/football/college-football/teams/145/schedule";
+        "https://om-schedule-proxy.tirving.workers.dev/";
 
     // Polling cadence + live-window length. Match the values the user agreed
     // to in the design discussion; tweak here, not at the call sites.
@@ -46,10 +45,6 @@ class BackgroundService extends System.ServiceDelegate {
 
     // Connect IQ's hard floor for temporal event scheduling.
     private const MIN_INTERVAL_SEC = 5 * 60;
-
-    // Ole Miss's ESPN team id, used to decide which competitor in a game
-    // dictionary is "us" vs "the opponent".
-    private const OLE_MISS_TEAM_ID = "145";
 
     function initialize() {
         System.ServiceDelegate.initialize();
@@ -83,7 +78,7 @@ class BackgroundService extends System.ServiceDelegate {
         data as Null or Lang.Dictionary or Lang.String or PersistedContent.Iterator
     ) as Void {
         if (responseCode == 200 && data instanceof Lang.Dictionary) {
-            var games = _parseEspn(data);
+            var games = _parseProxy(data);
             ScheduleStore.saveGames(games);
             _scheduleNextWake(games);
         } else {
@@ -111,7 +106,7 @@ class BackgroundService extends System.ServiceDelegate {
         var todaysGame = _findGameToday(games, nowSec);
 
         if (todaysGame != null) {
-            var kickoff = todaysGame[:kickoffSec];
+            var kickoff = todaysGame["kickoffSec"];
             var elapsed = nowSec - kickoff;
 
             if (elapsed >= 0 && elapsed < LIVE_WINDOW_SEC) {
@@ -161,7 +156,7 @@ class BackgroundService extends System.ServiceDelegate {
         var dayStart = nowSec - (nowSec % 86400);
         var dayEnd   = dayStart + 86400;
         for (var i = 0; i < games.size(); i++) {
-            var ko = games[i][:kickoffSec];
+            var ko = games[i]["kickoffSec"];
             if (ko != null && ko >= dayStart && ko < dayEnd) {
                 return games[i];
             }
@@ -179,7 +174,7 @@ class BackgroundService extends System.ServiceDelegate {
     ) as Lang.Number or Null {
         var earliest = null;
         for (var i = 0; i < games.size(); i++) {
-            var ko = games[i][:kickoffSec];
+            var ko = games[i]["kickoffSec"];
             if (ko != null && ko > nowSec && ko < nowSec + windowSec) {
                 if (earliest == null || ko < earliest) {
                     earliest = ko;
@@ -190,131 +185,48 @@ class BackgroundService extends System.ServiceDelegate {
     }
 
     // ========================================================================
-    // ESPN response parsing
+    // Proxy response parsing
     // ========================================================================
 
     //
-    // Map the ESPN team-schedule response to the storage shape Schedule.mc
-    // expects. Defensive at every step — ESPN occasionally returns events
-    // with missing fields (TBD opponents, postponed games), and we don't want
-    // a single malformed entry to drop the whole list.
+    // The Cloudflare Worker already strips ESPN's payload to the shape we
+    // store ({opponent, kickoffSec, confirmed, status, home}), so this is
+    // mostly a transcribe-with-defensive-defaults pass — guard against
+    // missing fields per entry so one malformed event doesn't drop the rest.
     //
-    private function _parseEspn(json as Lang.Dictionary) as Lang.Array<Lang.Dictionary> {
+    private function _parseProxy(json as Lang.Dictionary) as Lang.Array<Lang.Dictionary> {
         var out = [];
         var events = json["events"];
         if (events == null) {
             return out;
         }
         for (var i = 0; i < events.size(); i++) {
-            var parsed = _parseEvent(events[i]);
-            if (parsed != null) {
-                out.add(parsed);
+            var e = events[i];
+            if (e == null) { continue; }
+
+            // kickoffSec is the only field we can't synthesize — without it
+            // the entry is useless to the schedule view.
+            var kickoffSec = e["kickoffSec"];
+            var opponent = e["opponent"];
+            if (kickoffSec == null || opponent == null) {
+                continue;
             }
+
+            var home      = e["home"];
+            var confirmed = e["confirmed"];
+            var status    = e["status"];
+
+            // String keys (not symbols) because this dict will be passed to
+            // Application.Storage, which rejects symbol-keyed dicts with
+            // UnexpectedTypeException.
+            out.add({
+                "opponent"   => opponent,
+                "home"       => (home != null) ? home : false,
+                "kickoffSec" => kickoffSec,
+                "confirmed"  => (confirmed != null) ? confirmed : true,
+                "status"     => (status != null) ? status : "STATUS_SCHEDULED"
+            });
         }
         return out;
-    }
-
-    //
-    // Pull a single event dictionary out of ESPN's response. Returns null if
-    // the event is too malformed to use (e.g. missing date).
-    //
-    private function _parseEvent(e as Lang.Dictionary) as Lang.Dictionary or Null {
-        var kickoffSec = _parseIso(e["date"]);
-        if (kickoffSec == null) {
-            return null;
-        }
-
-        var opponent = "TBD";
-        var isHome = false;
-        var competitions = e["competitions"];
-        if (competitions != null && competitions.size() > 0) {
-            var competitors = competitions[0]["competitors"];
-            if (competitors != null) {
-                for (var c = 0; c < competitors.size(); c++) {
-                    var comp = competitors[c];
-                    var team = comp["team"];
-                    if (team == null) { continue; }
-                    if (team["id"].equals(OLE_MISS_TEAM_ID)) {
-                        isHome = comp["homeAway"].equals("home");
-                    } else {
-                        opponent = team["displayName"];
-                    }
-                }
-            }
-        }
-
-        // ESPN flags TBD-time games via the status detail string. The watch
-        // face renders "TBD" instead of a kickoff time when confirmed=false.
-        var confirmed = true;
-        var statusName = "STATUS_SCHEDULED";
-        var status = e["status"];
-        if (status != null && status["type"] != null) {
-            var type = status["type"];
-            if (type["name"] != null) {
-                statusName = type["name"];
-            }
-            var detail = type["detail"];
-            if (detail != null && detail.find("TBD") != null) {
-                confirmed = false;
-            }
-        }
-
-        return {
-            :opponent   => opponent,
-            :home       => isHome,
-            :kickoffSec => kickoffSec,
-            :confirmed  => confirmed,
-            :status     => statusName
-        };
-    }
-
-    //
-    // ISO 8601 → epoch seconds, assuming the trailing "Z" UTC suffix that
-    // ESPN uses (e.g. "2025-09-13T20:30Z"). Returns null on any parse failure
-    // so the caller can drop the malformed event.
-    //
-    // We don't import a date-parsing library; the substring/toNumber dance
-    // here is small and avoids dragging in extra code into the constrained
-    // background-process memory budget.
-    //
-    private function _parseIso(s as Lang.String or Null) as Lang.Number or Null {
-        if (s == null || s.length() < 16) {
-            return null;
-        }
-        var year   = s.substring(0,  4).toNumber();
-        var month  = s.substring(5,  7).toNumber();
-        var day    = s.substring(8, 10).toNumber();
-        var hour   = s.substring(11, 13).toNumber();
-        var minute = s.substring(14, 16).toNumber();
-        if (year == null || month == null || day == null
-                || hour == null || minute == null) {
-            return null;
-        }
-        return _utcSec(year, month, day, hour, minute);
-    }
-
-    //
-    // Same UTC-epoch math as Schedule._utcMoment, kept here so the background
-    // process doesn't have to depend on the foreground Schedule module. Two
-    // copies of ~10 lines of arithmetic is cheaper than the alternative.
-    //
-    private function _utcSec(year, month, day, hour, minute) as Lang.Number {
-        var days = 0;
-        for (var y = 1970; y < year; y++) {
-            days += _isLeap(y) ? 366 : 365;
-        }
-        var monthDays = [31, _isLeap(year) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-        for (var m = 0; m < month - 1; m++) {
-            days += monthDays[m];
-        }
-        days += day - 1;
-        return days * 86400 + hour * 3600 + minute * 60;
-    }
-
-    private function _isLeap(year) as Lang.Boolean {
-        if (year % 400 == 0) { return true; }
-        if (year % 100 == 0) { return false; }
-        if (year % 4 == 0)   { return true; }
-        return false;
     }
 }

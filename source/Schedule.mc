@@ -159,13 +159,16 @@ module Schedule {
         var out = [];
         for (var i = 0; i < rawArr.size(); i++) {
             var raw = rawArr[i];
-            var kickoffSec = raw[:kickoffSec];
+            // Storage-side dicts use String keys (Application.Storage rejects
+            // symbol-keyed dicts). The in-memory shape returned here keeps
+            // symbol keys to match _buildStaticSchedule and the view.
+            var kickoffSec = raw["kickoffSec"];
             if (kickoffSec == null) { continue; }
             out.add({
-                :opponent  => raw[:opponent],
-                :home      => raw[:home],
+                :opponent  => raw["opponent"],
+                :home      => raw["home"],
                 :kickoff   => new Time.Moment(kickoffSec),
-                :confirmed => raw[:confirmed]
+                :confirmed => raw["confirmed"]
             });
         }
         return out;

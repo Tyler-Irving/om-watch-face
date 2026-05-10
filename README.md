@@ -5,9 +5,10 @@ A Garmin Connect IQ watch face for the Fenix 8 / Fenix 8 Pro 47 mm
 and a countdown to the next Ole Miss Rebels football kickoff over the
 Ole Miss logo.
 
-Schedule data is fetched in the background from ESPN's public API on
-an adaptive cadence (daily off-season, every 15 min during games),
-with a compiled-in static schedule as the offline / first-launch
+Schedule data is fetched in the background from a Cloudflare Worker proxy
+(`om-schedule-proxy`) that wraps ESPN's public API and strips each event
+to ~150 bytes. Polling is adaptive — daily off-season, every 15 min during
+games — with a compiled-in static schedule as the offline / first-launch
 fallback.
 
 ## What's in the box
@@ -145,11 +146,17 @@ the App class).
 ## Live schedule data
 
 `source/BackgroundService.mc` is a `Toybox.System.ServiceDelegate`
-(annotated `(:background)`) that hits ESPN's free team-schedule
-endpoint, parses events, and writes them to `Application.Storage` via
-`ScheduleStore`. The watch face reads from storage on every redraw and
-falls back to the compiled-in static schedule when storage is empty
+(annotated `(:background)`) that hits a slim Cloudflare Worker proxy,
+parses the returned events, and writes them to `Application.Storage`
+via `ScheduleStore`. The watch face reads from storage on every redraw
+and falls back to the compiled-in static schedule when storage is empty
 (first launch, off-season, or fetch failures).
+
+The proxy lives in the sibling repo `om-schedule-proxy` — its job is to
+hit ESPN's free team-schedule endpoint server-side, strip each event to
+`{opponent, kickoffSec, confirmed, status, home}` tuples, and return
+~1–2 KB. This sidesteps Connect IQ's per-request JSON size cap (~32 KB
+on watch faces; ESPN's raw response is ~400 KB).
 
 Polling is adaptive — the service re-registers itself for its own next
 wake based on what's coming up:
@@ -165,30 +172,37 @@ required — Garmin routes background HTTP through Connect Mobile over
 BLE, so missed wake-ups (phone out of range) are dropped rather than
 caught up.
 
-### Known gaps blocking real-hardware end-to-end
+### Off-season behavior
 
-1. **ESPN response is too large.** The full team-schedule payload runs
-   ~400 KB; Connect IQ's per-request JSON cap on watch faces is
-   ~32 KB, so `makeWebRequest` will reject it as oversized. Standard
-   workaround is a thin proxy (Cloudflare Worker / Vercel function /
-   etc.) that hits ESPN, strips each event to
-   `{opponent, kickoffSec, confirmed, status, home}`, and returns
-   ~1 – 2 KB. Then point `BackgroundService.SCHEDULE_URL` at it.
-2. **Out-of-season responses are empty.** ESPN's endpoint returns
-   `events: []` until the new schedule is published (typically late
-   spring / early summer). The static fallback in `Schedule.mc`
-   covers this — refresh it each year when the new schedule drops.
+ESPN's endpoint returns `events: []` until the new schedule is
+published (typically late spring / early summer). When the proxy
+returns empty events, `Schedule.mc` falls back to the compiled-in
+static schedule. Refresh `_buildStaticSchedule()` each year when the
+new schedule drops; the static fallback also covers offline / first-
+launch / fetch-failure cases regardless of season.
+
+### Gotchas worth knowing
+
+- **`(:background)` on `ScheduleStore`.** The background process is a
+  separate build target; modules without the `(:background)` annotation
+  get dropped from it. Any module the background touches needs the
+  annotation, or `Application.Storage.setValue` etc. will crash with
+  `Failed invoking <symbol>` the first time onResponse runs.
+- **String keys, not Symbol keys, in Storage-bound dicts.**
+  `Application.Storage` accepts only `Number | Long | Float | Double |
+  String` as dictionary keys. Symbol-keyed dicts throw
+  `UnexpectedTypeException` on `setValue`. The in-memory shape returned
+  by `Schedule._hydrateStored()` re-keys with Symbols to match the
+  static-schedule shape the view expects.
 
 ## Next steps
 
-- **Slim ESPN proxy.** See "Known gaps" above. This is the blocker for
-  on-hardware live data; everything else hangs off it.
 - **Refresh the static fallback for 2026.** Edit the array in
   `source/Schedule.mc → _buildStaticSchedule()`. Each row is
   `(opponent, isHome, year, month, day, hourUTC, minuteUTC, confirmed)`.
   Set `confirmed=false` for any TBD kickoff. The static schedule
-  doubles as the off-season / offline fallback even after the network
-  path is unblocked.
+  doubles as the off-season / offline fallback when the proxy returns
+  empty events.
 - **Live scores.** Add `:homeScore`, `:awayScore`, and `:gameClock`
   keys to the schedule entries (and to `ScheduleStore`'s persisted
   shape). In `_drawKickoffSection()`, when status is `STATUS_LIVE`,

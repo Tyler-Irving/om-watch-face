@@ -11,6 +11,13 @@ using Toybox.Lang;
 // Time.Moment isn't directly storable, so kickoff times round-trip as Number
 // epoch seconds (`:kickoffSec`); Schedule.mc rehydrates them on read.
 //
+// (:background) so the symbols are linked into BOTH the background-process
+// binary (where BackgroundService calls saveGames / setError / setPollMode)
+// AND the foreground binary (where Schedule.mc reads loadGames). Without this
+// annotation the background build silently drops these symbols and onResponse
+// crashes with "Failed invoking <symbol>" the first time it runs.
+//
+(:background)
 module ScheduleStore {
 
     // Storage keys. Kept as constants so a typo can't desync producer/consumer.
